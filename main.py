@@ -2,6 +2,35 @@ import json
 from math import sin, cos, sqrt, pi
 from random import random
 
+#константы и параметры
+FOOD_MASS = None
+GAME_HEIGHT = None
+GAME_TICKS = None
+GAME_WIDTH = None
+INERTION_FACTOR = None
+MAX_FRAGS_CNT = None
+SPEED_FACTOR = None
+TICKS_TIL_FUSION = None
+VIRUS_RADIUS = None
+VIRUS_SPLIT_MASS = None
+VISCOSITY = None
+FOOD_RADIUS = 2.5
+SPLIT_THRESHOLD = 120
+
+def initParams( data ):
+    global FOOD_MASS, GAME_HEIGHT, GAME_TICKS, GAME_WIDTH, INERTION_FACTOR, MAX_FRAGS_CNT, SPEED_FACTOR, TICKS_TIL_FUSION, VIRUS_RADIUS, VIRUS_SPLIT_MASS, VISCOSITY
+    FOOD_MASS = data.get( 'FOOD_MASS' )
+    GAME_HEIGHT = data.get( 'GAME_HEIGHT' )
+    GAME_TICKS = data.get( 'GAME_TICKS' )
+    GAME_WIDTH = data.get( 'GAME_WIDTH' )
+    INERTION_FACTOR = data.get( 'INERTION_FACTOR' )
+    MAX_FRAGS_CNT = data.get( 'MAX_FRAGS_CNT' )
+    SPEED_FACTOR = data.get( 'SPEED_FACTOR' )
+    TICKS_TIL_FUSION = data.get( 'TICKS_TIL_FUSION' )
+    VIRUS_RADIUS = data.get( 'VIRUS_RADIUS' )
+    VIRUS_SPLIT_MASS = data.get( 'VIRUS_SPLIT_MASS' )
+    VISCOSITY = data.get( 'VISCOSITY' )
+
 def makeCommand( x, y, debug ):
         command = {}
         command['X'] = x
@@ -23,22 +52,6 @@ directionRange = {
             'TOPLEFT': [0.0, 0.5*pi]
         }
 
-class GameParams:
-    def __init__( self, data ):
-        self.FOOD_MASS = data.get( 'FOOD_MASS' )
-        self.GAME_HEIGHT = data.get( 'GAME_HEIGHT' )
-        self.GAME_TICKS = data.get( 'GAME_TICKS' )
-        self.GAME_WIDTH = data.get( 'GAME_WIDTH' )
-        self.INERTION_FACTOR = data.get( 'INERTION_FACTOR' )
-        self.MAX_FRAGS_CNT = data.get( 'MAX_FRAGS_CNT' )
-        self.SPEED_FACTOR = data.get( 'SPEED_FACTOR' )
-        self.TICKS_TIL_FUSION = data.get( 'TICKS_TIL_FUSION' )
-        self.VIRUS_RADIUS = data.get( 'VIRUS_RADIUS' )
-        self.VIRUS_SPLIT_MASS = data.get( 'VIRUS_SPLIT_MASS' )
-        self.VISCOSITY = data.get( 'VISCOSITY' )
-        self.FOOD_RADIUS = 2.5
-        self.SPLIT_THRESHOLD = 120
-
 class GameObject:
     def __init__( self, data ):
         self.X = data.get( 'X' )
@@ -46,14 +59,20 @@ class GameObject:
     
     def distance( self, other ):
         return distance( self, other )
-        
-class MinePart( GameObject ):
+
+class PlayerPart( GameObject ):
     def __init__( self, data ):
-        self.X = data.get( 'X' )
-        self.Y = data.get( 'Y' )
+        super().__init__( data )
         self.Id = data.get( 'Id' )
         self.R = data.get( 'R' )
         self.M = data.get( 'M' )
+        
+    def maxSpeed( self ):
+        return SPEED_FACTOR / sqrt( self.M )    
+        
+class MinePart( PlayerPart ):
+    def __init__( self, data ):
+        super().__init__( data )
         self.VX = data.get( 'SX' )
         self.VY = data.get( 'SY' )
         # таймер слияния - может отсутствовать
@@ -63,34 +82,24 @@ class MinePart( GameObject ):
             self.TTF = 0
             
 class Food( GameObject ):
-    pass
+    def __init__( self, data ):
+        super().__init__( data )
 
 class Ejection( GameObject ):
     def __init__( self, data ):
-        self.X = data.get( 'X' )
-        self.Y = data.get( 'Y' )
+        super().__init__( data )
         self.pId = data.get( 'pId' )
     
 class Virus( GameObject ):
     def __init__( self, data ):
-        self.X = data.get( 'X' )
-        self.Y = data.get( 'Y' )
+        super().__init__( data )
         self.Id = data.get( 'Id' )
         self.M = data.get( 'M' )
-        self.pId = data.get( 'pId' )
-        
-class PlayerPart( GameObject ):
-    def __init__( self, data ):
-        self.X = data.get( 'X' )
-        self.Y = data.get( 'Y' )
-        self.Id = data.get( 'Id' )
-        self.R = data.get( 'R' )
-        self.M = data.get( 'M' )
+
 
 class Strategy:
     
     def __init__( self ):
-        self.params = None
         self.mine = []
         self.direction = None
         self.food = []
@@ -106,14 +115,16 @@ class Strategy:
         self.top = None
         self.bottom = None
         self.isSplittable = False
+        self.runPoint = None #точка отступление
+    
         
     def parseData( self, data ):
         mine, objects = data.get( 'Mine' ), data.get( 'Objects' )
         self.mine.clear()
-        self.minSelfRadius = sqrt( self.params.GAME_HEIGHT ** 2 + self.params.GAME_WIDTH ** 2 );
-        self.left = self.params.GAME_WIDTH
+        self.minSelfRadius = sqrt( GAME_HEIGHT ** 2 + GAME_WIDTH ** 2 );
+        self.left = GAME_WIDTH
         self.right = 0
-        self.top = self.params.GAME_HEIGHT
+        self.top = GAME_HEIGHT
         self.bottom = 0
         self.isSplittable = False
         minMass = 10000.0
@@ -125,7 +136,7 @@ class Strategy:
             self.right = max( self.right, m.X + m.R )
             self.top = min( self.top, m.Y - m.R )
             self.bottom = max( self.bottom, m.Y + m.R )
-            if m.M >= self.params.SPLIT_THRESHOLD:
+            if m.M >= SPLIT_THRESHOLD:
                 self.isSplittable = True
             if m.M < minMass:
                 minMass = m.M
@@ -153,31 +164,30 @@ class Strategy:
                     self.player.append( p )
             
     def run( self ):
-        self.params = GameParams( json.loads( input() ) )
-        self.fieldDiameter = sqrt( self.params.GAME_WIDTH ** 2 + self.params.GAME_HEIGHT ** 2 )
+        initParams( json.loads( input() ) )
+        self.fieldDiameter = sqrt( GAME_WIDTH ** 2 + GAME_HEIGHT ** 2 )
         while True:
             data = json.loads( input() )
             cmd = self.on_tick( data )
             print( json.dumps(cmd) )
 
     def isFoodReachable( self, food ):
-        effectiveRadius = self.minSelfRadius - self.params.FOOD_RADIUS / 6
+        effectiveRadius = self.minSelfRadius - FOOD_RADIUS / 6
         # для угла (0, 0)
         if food.X < self.minSelfRadius and food.Y < self.minSelfRadius:
             checkPoint = GameObject( { 'X': self.minSelfRadius, 'Y': self.minSelfRadius } )
             return distance( checkPoint, food ) < effectiveRadius
-        elif food.X > self.params.GAME_WIDTH - self.minSelfRadius and food.Y < self.minSelfRadius:
-            checkPoint = GameObject( { 'X': self.params.GAME_WIDTH - self.minSelfRadius, 'Y': self.minSelfRadius } )
+        elif food.X > GAME_WIDTH - self.minSelfRadius and food.Y < self.minSelfRadius:
+            checkPoint = GameObject( { 'X': GAME_WIDTH - self.minSelfRadius, 'Y': self.minSelfRadius } )
             return distance( checkPoint, food ) < effectiveRadius
-        elif food.X < self.minSelfRadius and food.Y > self.params.GAME_HEIGHT - self.minSelfRadius:
-            checkPoint = GameObject( { 'X': self.minSelfRadius, 'Y': self.params.GAME_HEIGHT - self.minSelfRadius } )
+        elif food.X < self.minSelfRadius and food.Y > GAME_HEIGHT - self.minSelfRadius:
+            checkPoint = GameObject( { 'X': self.minSelfRadius, 'Y': GAME_HEIGHT - self.minSelfRadius } )
             return distance( checkPoint, food ) < effectiveRadius
-        elif food.X > self.params.GAME_WIDTH - self.minSelfRadius and food.Y > self.params.GAME_HEIGHT - self.minSelfRadius:
-            checkPoint = GameObject( { 'X': self.params.GAME_WIDTH - self.minSelfRadius, 'Y': self.params.GAME_HEIGHT - self.minSelfRadius } )
+        elif food.X > GAME_WIDTH - self.minSelfRadius and food.Y > GAME_HEIGHT - self.minSelfRadius:
+            checkPoint = GameObject( { 'X': GAME_WIDTH - self.minSelfRadius, 'Y': GAME_HEIGHT - self.minSelfRadius } )
             return distance( checkPoint, food ) < effectiveRadius
         else:
-            return food.X > ( self.params.FOOD_RADIUS / 6 ) and food.X < ( self.params.GAME_WIDTH - self.params.FOOD_RADIUS / 6 ) and food.Y > ( self.params.FOOD_RADIUS / 6 ) and food.Y < ( self.params.GAME_HEIGHT - self.params.FOOD_RADIUS / 6 )
-        
+            return food.X > ( FOOD_RADIUS / 6 ) and food.X < ( GAME_WIDTH - FOOD_RADIUS / 6 ) and food.Y > ( FOOD_RADIUS / 6 ) and food.Y < ( GAME_HEIGHT - FOOD_RADIUS / 6 )
         
     def get_nearest_food( self ):
         nearest = None
@@ -196,30 +206,30 @@ class Strategy:
         borderKey = ''
         if self.top <= 2:
             borderKey += 'TOP'
-        elif self.bottom >= self.params.GAME_HEIGHT - 2:
+        elif self.bottom >= GAME_HEIGHT - 2:
             borderKey += 'BOTTOM'
         if self.left <= 2:
             borderKey += 'LEFT'
-        elif self.right >= self.params.GAME_WIDTH - 2:
+        elif self.right >= GAME_WIDTH - 2:
             borderKey += 'RIGHT'
         return borderKey
     
     def isOnBorder( self ):
-        return self.top <= 0 or self.bottom >= self.params.GAME_HEIGHT or self.left <= 0 or self.right >= self.params.GAME_WIDTH
+        return self.top <= 0 or self.bottom >= GAME_HEIGHT or self.left <= 0 or self.right >= GAME_WIDTH
     
     def distance( self, obj ):
-        distance = sqrt( self.params.GAME_WIDTH ** 2 + self.params.GAME_HEIGHT ** 2 )
+        distance = sqrt( GAME_WIDTH ** 2 + GAME_HEIGHT ** 2 )
         for m in self.mine:
             distance = min( distance, m.distance( obj ) )
         return distance
             
     def getNewPointToMove( self ):
-        x = self.minSelfRadius + random() * ( self.params.GAME_WIDTH - self.minSelfRadius * 2 )
-        y = self.minSelfRadius + random() * ( self.params.GAME_HEIGHT - self.minSelfRadius * 2 )
+        x = self.minSelfRadius + random() * ( GAME_WIDTH - self.minSelfRadius * 2 )
+        y = self.minSelfRadius + random() * ( GAME_HEIGHT - self.minSelfRadius * 2 )
         point = GameObject( { 'X': x, 'Y': y } )
         while self.distance( point ) <= self.minSelfRadius:
-            x = self.minSelfRadius + random() * ( self.params.GAME_WIDTH - self.minSelfRadius * 2 )
-            y = self.minSelfRadius + random() * ( self.params.GAME_HEIGHT - self.minSelfRadius * 2 )
+            x = self.minSelfRadius + random() * ( GAME_WIDTH - self.minSelfRadius * 2 )
+            y = self.minSelfRadius + random() * ( GAME_HEIGHT - self.minSelfRadius * 2 )
             point = GameObject( { 'X': x, 'Y': y } )
         return point
     
@@ -247,8 +257,8 @@ class Strategy:
         dx = mineEnd.X - enemyEnd.X
         dy = mineEnd.Y - enemyEnd.Y
         d = sqrt( dx ** 2 + dy ** 2 )
-        x = mineEnd.X + ( dx * 1000.0 / d )
-        y = mineEnd.Y + ( dy * 1000.0 / d )
+        x = mineEnd.X + ( dx * 100.0 / d )
+        y = mineEnd.Y + ( dy * 100.0 / d )
         return GameObject( { 'X': x, 'Y': y } )
         
     def getAttackPoint( self ):
@@ -265,9 +275,12 @@ class Strategy:
         dx = enemyEnd.X - mineEnd.X
         dy = enemyEnd.Y - mineEnd.Y
         d = sqrt( dx ** 2 + dy ** 2 )
-        x = mineEnd.X + ( dx * 1000.0 / d )
-        y = mineEnd.Y + ( dy * 1000.0 / d )
+        x = mineEnd.X + ( dx * 100.0 / d )
+        y = mineEnd.Y + ( dy * 100.0 / d )
         return GameObject( { 'X': x, 'Y': y } )
+    
+    def maxSpeed( self, obj ):
+        return SPEED_FACTOR / sqrt( obj.M )
     
     def on_tick( self, data ):
         self.parseData( data )
@@ -277,10 +290,10 @@ class Strategy:
         else:
             if len( self.dangerous ) > 0:
                  #избегаем опасных соседей
-                 runPoint = self.getRunPoint()
-                 command = makeCommand( runPoint.X, runPoint.Y, 'run' )
+                 self.runPoint = self.getRunPoint()
+                 command = makeCommand( self.runPoint.X, self.runPoint.Y, 'run' )
                  if self.isSplittable:
-                    command['Split'] = self.isSplittable
+                    command['Split'] = True
             elif len( self.eatable ) > 0:
                  #пытаемся съесть конкурента если можем
                  attackPoint = self.getAttackPoint()
@@ -291,15 +304,15 @@ class Strategy:
                     # пытаемся съесть еду если видно
                     command = makeCommand( food.X, food.Y, 'to food' )
                 else:
-                    # движемся к выбранной точке
+                    # движемся в заданном напралении
                     borderKey = self.getBorderKey()
                     if self.direction is None or borderKey != '':
                         self.direction = self.getNewDirectionToMove( borderKey )
-                    x = self.mine[0].X + cos( self.direction ) * 1000
-                    y = self.mine[0].Y + sin( self.direction ) * 1000
+                    x = self.mine[0].X + cos( self.direction ) * 100
+                    y = self.mine[0].Y + sin( self.direction ) * 100
                     command = makeCommand( x, y, 'by direction' )
                 if self.isSplittable:
-                    command['Split'] = self.isSplittable
+                    command['Split'] = True
         # нужно скорректировать для случая близости к границе
         return command
 
