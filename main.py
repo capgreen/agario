@@ -13,14 +13,14 @@ def distance( a, b ):
     return sqrt( ( a.X - b.X ) ** 2 + ( a.Y - b.Y ) ** 2 )
 
 directionRange = {
-            'TOP': [0.0, -pi],
-            'TOPRIGHT': [-pi/2.0, -pi/2.0],
-            'RIGHT': [-pi/2.0, -pi],
-            'BOTTOMRIGHT': [-pi, -pi/2.0],
-            'BOTTOM': [-pi, -pi],
-            'BOTTOMLEFT': [-1.5*pi, -pi/2.0],
-            'LEFT': [-1.5*pi, -pi],
-            'TOPLEFT': [0.0, -pi/2.0]
+            'TOP': [0.0, pi],
+            'TOPRIGHT': [0.5 * pi, 0.5 * pi],
+            'RIGHT': [0.5 * pi, pi],
+            'BOTTOMRIGHT': [pi, 0.5 * pi],
+            'BOTTOM': [pi, pi],
+            'BOTTOMLEFT': [1.5 * pi, 0.5 * pi],
+            'LEFT': [1.5*pi, pi],
+            'TOPLEFT': [0.0, 0.5*pi]
         }
 
 class GameParams:
@@ -92,7 +92,7 @@ class Strategy:
     def __init__( self ):
         self.params = None
         self.mine = []
-        self.pointToMove = None
+        self.direction = None
         self.food = []
         self.ejection = []
         self.virus = []
@@ -103,6 +103,7 @@ class Strategy:
         self.right = None
         self.top = None
         self.bottom = None
+        self.isSplittable = False
         
     def parseData( self, data ):
         mine, objects = data.get( 'Mine' ), data.get( 'Objects' )
@@ -112,6 +113,7 @@ class Strategy:
         self.right = 0
         self.top = self.params.GAME_HEIGHT
         self.bottom = 0
+        self.isSplittable = False
         for m in mine:
             self.mine.append( MinePart( m ) )
         for m in self.mine:
@@ -120,6 +122,8 @@ class Strategy:
             self.right = max( self.right, m.X + m.R )
             self.top = min( self.top, m.Y - m.R )
             self.bottom = max( self.bottom, m.Y + m.R )
+            if m.M >= self.params.SPLIT_THRESHOLD:
+                self.isSplittable = True
         self.food.clear()
         self.ejection.clear()
         self.virus.clear()
@@ -177,13 +181,13 @@ class Strategy:
     
     def getBorderKey( self ):
         borderKey = ''
-        if self.top <= 0:
+        if self.top <= 2:
             borderKey += 'TOP'
-        elif self.bottom >= self.params.GAME_HEIGHT:
+        elif self.bottom >= self.params.GAME_HEIGHT - 2:
             borderKey += 'BOTTOM'
-        if self.left <= 0:
+        if self.left <= 2:
             borderKey += 'LEFT'
-        elif self.right >= self.params.GAME_WIDTH:
+        elif self.right >= self.params.GAME_WIDTH - 2:
             borderKey += 'RIGHT'
         return borderKey
     
@@ -206,6 +210,14 @@ class Strategy:
             point = GameObject( { 'X': x, 'Y': y } )
         return point
     
+    def getNewDirectionToMove( self, borderKey ):
+        if borderKey == '':
+            return random() * 2.0 * pi
+        else:
+            dRange = directionRange[borderKey]
+            direction = dRange[0] + random() * dRange[1]
+            return direction
+    
     def on_tick( self, data ):
         self.parseData( data )
         command = {}
@@ -220,9 +232,14 @@ class Strategy:
                 command = makeCommand( food.X, food.Y, 'to food' )
             else:
                 # движемся к выбранной точке
-                if self.pointToMove is None or self.distance( self.pointToMove ) <= self.minSelfRadius:
-                    self.pointToMove = self.getNewPointToMove()
-                command = makeCommand( self.pointToMove.X, self.pointToMove.Y, 'to point' )
+                borderKey = self.getBorderKey()
+                if self.direction is None or borderKey != '':
+                    self.direction = self.getNewDirectionToMove( borderKey )
+                x = self.mine[0].X + cos( self.direction ) * self.minSelfRadius
+                y = self.mine[0].Y + sin( self.direction ) * self.minSelfRadius
+                command = makeCommand( x, y, 'by direction' )
+            if self.isSplittable:
+                command['Split'] = self.isSplittable
         # нужно скорректировать для случая близости к границе
         return command
 
