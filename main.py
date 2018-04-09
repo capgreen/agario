@@ -97,6 +97,8 @@ class Strategy:
         self.ejection = []
         self.virus = []
         self.player = []
+        self.dangerous = []
+        self.eatable = []
         self.fieldDiameter = None
         self.minSelfRadius = None
         self.left = None
@@ -114,6 +116,7 @@ class Strategy:
         self.top = self.params.GAME_HEIGHT
         self.bottom = 0
         self.isSplittable = False
+        minMass = 10000.0
         for m in mine:
             self.mine.append( MinePart( m ) )
         for m in self.mine:
@@ -124,10 +127,14 @@ class Strategy:
             self.bottom = max( self.bottom, m.Y + m.R )
             if m.M >= self.params.SPLIT_THRESHOLD:
                 self.isSplittable = True
+            if m.M < minMass:
+                minMass = m.M
         self.food.clear()
         self.ejection.clear()
         self.virus.clear()
         self.player.clear()
+        self.dangerous.clear()
+        self.eatable.clear()
         for o in objects:
             objectType = o.get( 'T' )
             if objectType == 'F':
@@ -137,7 +144,13 @@ class Strategy:
             elif objectType == 'V':
                 self.virus.append( Virus( o ) )
             elif objectType == 'P':
-                self.player.append( PlayerPart( o ) )
+                p = PlayerPart( o )
+                if minMass * 1.2 < p.M:
+                    self.dangerous.append( p )
+                elif minMass > p.M * 1.2:
+                    self.eatable.append( p )
+                else:
+                    self.player.append( p )
             
     def run( self ):
         self.params = GameParams( json.loads( input() ) )
@@ -218,28 +231,75 @@ class Strategy:
             direction = dRange[0] + random() * dRange[1]
             return direction
     
+    # ищем пару опасный противник - своя часть с минимальным расстоянием
+    # убегать будем по направлени, соединяющему центры этой пары
+    def getRunPoint( self ):
+        minDistance = 10000
+        mineEnd = None
+        enemyEnd = None
+        for mine in self.mine:
+            for enemy in self.dangerous:
+                distance = mine.distance( enemy )
+                if minDistance > distance:
+                    mineEnd = mine
+                    enemyEnd = enemy
+                    minDistance = distance
+        dx = mineEnd.X - enemyEnd.X
+        dy = mineEnd.Y - enemyEnd.Y
+        d = sqrt( dx ** 2 + dy ** 2 )
+        x = mineEnd.X + ( dx * 1000.0 / d )
+        y = mineEnd.Y + ( dy * 1000.0 / d )
+        return GameObject( { 'X': x, 'Y': y } )
+        
+    def getAttackPoint( self ):
+        minDistance = 10000
+        mineEnd = None
+        enemyEnd = None
+        for mine in self.mine:
+            for enemy in self.eatable:
+                distance = mine.distance( enemy )
+                if minDistance > distance:
+                    mineEnd = mine
+                    enemyEnd = enemy
+                    minDistance = distance
+        dx = enemyEnd.X - mineEnd.X
+        dy = enemyEnd.Y - mineEnd.Y
+        d = sqrt( dx ** 2 + dy ** 2 )
+        x = mineEnd.X + ( dx * 1000.0 / d )
+        y = mineEnd.Y + ( dy * 1000.0 / d )
+        return GameObject( { 'X': x, 'Y': y } )
+    
     def on_tick( self, data ):
         self.parseData( data )
         command = {}
         if len( self.mine ) == 0:
             command = makeCommand( 0, 0, 'game over' )
         else:
-            # избегаем опасные соседей
-            # пытаемся съесть конкурента если можем
-            food = self.get_nearest_food()
-            if food:
-                # пытаемся съесть еду если видно
-                command = makeCommand( food.X, food.Y, 'to food' )
+            if len( self.dangerous ) > 0:
+                 #избегаем опасных соседей
+                 runPoint = self.getRunPoint()
+                 command = makeCommand( runPoint.X, runPoint.Y, 'run' )
+                 if self.isSplittable:
+                    command['Split'] = self.isSplittable
+            elif len( self.eatable ) > 0:
+                 #пытаемся съесть конкурента если можем
+                 attackPoint = self.getAttackPoint()
+                 command = makeCommand( attackPoint.X, attackPoint.Y, 'run' )
             else:
-                # движемся к выбранной точке
-                borderKey = self.getBorderKey()
-                if self.direction is None or borderKey != '':
-                    self.direction = self.getNewDirectionToMove( borderKey )
-                x = self.mine[0].X + cos( self.direction ) * self.minSelfRadius
-                y = self.mine[0].Y + sin( self.direction ) * self.minSelfRadius
-                command = makeCommand( x, y, 'by direction' )
-            if self.isSplittable:
-                command['Split'] = self.isSplittable
+                food = self.get_nearest_food()
+                if food:
+                    # пытаемся съесть еду если видно
+                    command = makeCommand( food.X, food.Y, 'to food' )
+                else:
+                    # движемся к выбранной точке
+                    borderKey = self.getBorderKey()
+                    if self.direction is None or borderKey != '':
+                        self.direction = self.getNewDirectionToMove( borderKey )
+                    x = self.mine[0].X + cos( self.direction ) * 1000
+                    y = self.mine[0].Y + sin( self.direction ) * 1000
+                    command = makeCommand( x, y, 'by direction' )
+                if self.isSplittable:
+                    command['Split'] = self.isSplittable
         # нужно скорректировать для случая близости к границе
         return command
 
