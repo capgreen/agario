@@ -16,6 +16,11 @@ VIRUS_SPLIT_MASS = None
 VISCOSITY = None
 FOOD_RADIUS = 2.5
 SPLIT_THRESHOLD = 120
+ 
+SCORE_FOOD = 1
+SCORE_ENEMY_PART = 10
+SCORE_ENEMY = 100
+SCORE_VIRUS_BURST = 2
 
 def initParams( data ):
     global FOOD_MASS, GAME_HEIGHT, GAME_TICKS, GAME_WIDTH, INERTION_FACTOR, MAX_FRAGS_CNT, SPEED_FACTOR, TICKS_TIL_FUSION, VIRUS_RADIUS, VIRUS_SPLIT_MASS, VISCOSITY
@@ -59,16 +64,20 @@ class GameObject:
     
     def distance( self, other ):
         return distance( self, other )
-
-class PlayerPart( GameObject ):
+    
+class Virus( GameObject ):
     def __init__( self, data ):
         super().__init__( data )
         self.Id = data.get( 'Id' )
-        self.R = data.get( 'R' )
         self.M = data.get( 'M' )
-        
+
     def maxSpeed( self ):
         return SPEED_FACTOR / sqrt( self.M )    
+    
+class PlayerPart( Virus ):
+    def __init__( self, data ):
+        super().__init__( data )
+        self.R = data.get( 'R' )
         
 class MinePart( PlayerPart ):
     def __init__( self, data ):
@@ -90,11 +99,6 @@ class Ejection( GameObject ):
         super().__init__( data )
         self.pId = data.get( 'pId' )
     
-class Virus( GameObject ):
-    def __init__( self, data ):
-        super().__init__( data )
-        self.Id = data.get( 'Id' )
-        self.M = data.get( 'M' )
 
 
 class Strategy:
@@ -116,6 +120,7 @@ class Strategy:
         self.bottom = None
         self.isSplittable = False
         self.runPoint = None #точка отступление
+        self.totalMass = 0
     
         
     def parseData( self, data ):
@@ -128,6 +133,7 @@ class Strategy:
         self.bottom = 0
         self.isSplittable = False
         minMass = 10000.0
+        self.totalMass = 0
         for m in mine:
             self.mine.append( MinePart( m ) )
         for m in self.mine:
@@ -140,6 +146,7 @@ class Strategy:
                 self.isSplittable = True
             if m.M < minMass:
                 minMass = m.M
+            self.totalMass += m.M
         self.food.clear()
         self.ejection.clear()
         self.virus.clear()
