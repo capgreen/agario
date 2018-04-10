@@ -292,8 +292,6 @@ class Strategy:
                  #избегаем опасных соседей
                  self.runPoint = self.getRunPoint()
                  command = makeCommand( self.runPoint.X, self.runPoint.Y, 'run' )
-                 if self.isSplittable:
-                    command['Split'] = True
             elif len( self.eatable ) > 0:
                  #пытаемся съесть конкурента если можем
                  attackPoint = self.getAttackPoint()
