@@ -121,6 +121,7 @@ class Strategy:
         self.isSplittable = False
         self.runPoint = None #точка отступление
         self.totalMass = 0
+        self.timeFromLastContact = 1000 #время с момента последнего наблюдения противника
     
         
     def parseData( self, data ):
@@ -169,6 +170,10 @@ class Strategy:
                     self.eatable.append( p )
                 else:
                     self.player.append( p )
+        if len( self.dangerous ) > 0 or len( self.eatable ) > 0 or len( self.player ) > 0:
+            self.timeFromLastContact = 0
+        else:
+            self.timeFromLastContact += 1
             
     def run( self ):
         initParams( json.loads( input() ) )
@@ -316,7 +321,7 @@ class Strategy:
                     x = self.mine[0].X + cos( self.direction ) * 100
                     y = self.mine[0].Y + sin( self.direction ) * 100
                     command = makeCommand( x, y, 'by direction' )
-                if self.isSplittable:
+                if self.isSplittable and self.timeFromLastContact > 50:
                     command['Split'] = True
         # нужно скорректировать для случая близости к границе
         return command
