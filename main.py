@@ -21,9 +21,11 @@ SCORE_FOOD = 1
 SCORE_ENEMY_PART = 10
 SCORE_ENEMY = 100
 SCORE_VIRUS_BURST = 2
+CORNERS = []
 
 def initParams( data ):
-    global FOOD_MASS, GAME_HEIGHT, GAME_TICKS, GAME_WIDTH, INERTION_FACTOR, MAX_FRAGS_CNT, SPEED_FACTOR, TICKS_TIL_FUSION, VIRUS_RADIUS, VIRUS_SPLIT_MASS, VISCOSITY
+    global FOOD_MASS, GAME_HEIGHT, GAME_TICKS, GAME_WIDTH, INERTION_FACTOR, MAX_FRAGS_CNT, \
+                SPEED_FACTOR, TICKS_TIL_FUSION, VIRUS_RADIUS, VIRUS_SPLIT_MASS, VISCOSITY
     FOOD_MASS = data.get( 'FOOD_MASS' )
     GAME_HEIGHT = data.get( 'GAME_HEIGHT' )
     GAME_TICKS = data.get( 'GAME_TICKS' )
@@ -35,6 +37,10 @@ def initParams( data ):
     VIRUS_RADIUS = data.get( 'VIRUS_RADIUS' )
     VIRUS_SPLIT_MASS = data.get( 'VIRUS_SPLIT_MASS' )
     VISCOSITY = data.get( 'VISCOSITY' )
+    CORNERS.append( GameObject( { 'X': 0, 'Y': 0 } ) )
+    CORNERS.append( GameObject( { 'X': GAME_WIDTH, 'Y': 0 } ) )
+    CORNERS.append( GameObject( { 'X': GAME_WIDTH, 'Y': GAME_HEIGHT } ) )
+    CORNERS.append( GameObject( { 'X': 0, 'Y': GAME_HEIGHT } ) )
 
 def makeCommand( x, y, debug ):
         command = {}
@@ -45,6 +51,13 @@ def makeCommand( x, y, debug ):
     
 def distance( a, b ):
     return sqrt( ( a.X - b.X ) ** 2 + ( a.Y - b.Y ) ** 2 )
+
+def normalize( x, y ):
+    l = sqrt( x ** 2 + y ** 2 )
+    if l == 0:
+        return x, y
+    else:
+        return x / l, y / l
 
 directionRange = {
             'TOP': [0.0, pi],
@@ -70,14 +83,15 @@ class Virus( GameObject ):
         super().__init__( data )
         self.Id = data.get( 'Id' )
         self.M = data.get( 'M' )
-
-    def maxSpeed( self ):
-        return SPEED_FACTOR / sqrt( self.M )    
     
 class PlayerPart( Virus ):
     def __init__( self, data ):
         super().__init__( data )
         self.R = data.get( 'R' )
+    
+    # максимальная скорость игрока
+    def maxSpeed( self ):
+        return SPEED_FACTOR / sqrt( self.M )    
         
 class MinePart( PlayerPart ):
     def __init__( self, data ):
@@ -89,6 +103,38 @@ class MinePart( PlayerPart ):
             self.TTF = data.get( 'TTF' ) 
         else:
             self.TTF = 0
+        self.StopDistance = self.stopDistance()
+        
+    # минимальное расстояние на котором объект может остановиться 
+    # после движения на полной скорости
+    def stopDistance( self ):
+        alpha = INERTION_FACTOR / self.M
+        Vmax = self.maxSpeed()
+        V = Vmax
+        d = 0
+        while V > 0:
+            V = V + ( -Vmax - V ) * alpha
+            d += V
+        return d
+    
+    def distanceToBorder( self ):
+        return min( [self.X, GAME_WIDTH - self.X, self.Y, GAME_HEIGHT - self.Y ] )
+    
+    def borderStandoff( self ):
+        minDistance = self.R + 50.0
+        nx = 0.0
+        ny = 0.0
+        if self.X < minDistance:
+            nx = 1.0 / ( 2 + self.X )
+        elif self.X > GAME_WIDTH - minDistance:
+            nx = -1.0 / ( 2 + GAME_WIDTH - self.X )
+        if self.Y < minDistance:
+            ny = 1.0 / ( 2 + self.Y )
+        elif self.Y > GAME_HEIGHT - minDistance:
+            ny = -1.0 / ( 2 + GAME_HEIGHT - self.Y )
+        if nx != 0 or ny != 0:
+            nx, ny = normalize( nx, ny )
+        return nx, ny
             
 class Food( GameObject ):
     def __init__( self, data ):
@@ -122,6 +168,7 @@ class Strategy:
         self.runPoint = None #точка отступление
         self.totalMass = 0
         self.timeFromLastContact = 1000 #время с момента последнего наблюдения противника
+        self.corners = [] # углы карты - не рекомендуется убегать в угол
     
         
     def parseData( self, data ):
@@ -229,11 +276,9 @@ class Strategy:
     def isOnBorder( self ):
         return self.top <= 0 or self.bottom >= GAME_HEIGHT or self.left <= 0 or self.right >= GAME_WIDTH
     
+    # ищем минимальное расстояние между своими частями и заданным объектом
     def distance( self, obj ):
-        distance = sqrt( GAME_WIDTH ** 2 + GAME_HEIGHT ** 2 )
-        for m in self.mine:
-            distance = min( distance, m.distance( obj ) )
-        return distance
+        return min( map( (lambda x: x.distance( obj ) ), self.mine ) )
             
     def getNewPointToMove( self ):
         x = self.minSelfRadius + random() * ( GAME_WIDTH - self.minSelfRadius * 2 )
@@ -253,6 +298,19 @@ class Strategy:
             direction = dRange[0] + random() * dRange[1]
             return direction
     
+    # ищем единичный вектор отталкивания от границ
+    # от границ отталкиваемся по нормали 
+    def getBorderStandoff( self ):
+        dx = 0
+        dy = 0
+        dMin = 1000000
+        for m in self.mine:
+            d = m.distanceToBorder()
+            if d < dMin:
+                dx, dy = m.borderStandoff()
+                dMin = d
+        return dx, dy
+    
     # ищем пару опасный противник - своя часть с минимальным расстоянием
     # убегать будем по направлени, соединяющему центры этой пары
     def getRunPoint( self ):
@@ -268,11 +326,16 @@ class Strategy:
                     minDistance = distance
         dx = mineEnd.X - enemyEnd.X
         dy = mineEnd.Y - enemyEnd.Y
-        d = sqrt( dx ** 2 + dy ** 2 )
-        x = mineEnd.X + ( dx * 100.0 / d )
-        y = mineEnd.Y + ( dy * 100.0 / d )
+        # единичный вектор от противника к нам
+        dx, dy = normalize( dx, dy )
+        # вектор отталкивания от границ
+        sx, sy = self.getBorderStandoff()
+        dx += sx
+        dy += sy
+        dx, dy = normalize( dx, dy )
+        x, y = self.setPointOnBorder( self.mine[0], dx, dy )
         return GameObject( { 'X': x, 'Y': y } )
-        
+    
     def getAttackPoint( self ):
         minDistance = 10000
         mineEnd = None
@@ -291,8 +354,33 @@ class Strategy:
         y = mineEnd.Y + ( dy * 100.0 / d )
         return GameObject( { 'X': x, 'Y': y } )
     
-    def maxSpeed( self, obj ):
-        return SPEED_FACTOR / sqrt( obj.M )
+    def currentSpeed( self ):
+        VX = 0
+        VY = 0
+        for m in self.mine:
+            VX += m.VX * m.M
+            VY += m.VY * m.M
+        VX /= self.totalMass
+        VY /= self.totalMass
+        return VX, VY
+    
+    def setPointOnBorder( self, pt, nx, ny ):
+        # ищем границу, которую пересекаем раньше всего
+        x = pt.X
+        y = pt.Y
+        Lmin = 10000
+        l = []
+        if nx != 0:
+            l.append( -x/nx )
+            l.append( (GAME_WIDTH - x)/nx )
+        if ny != 0:
+            l.append( -y/ny )
+            l.append( (GAME_HEIGHT-y)/ny )
+        l.sort()
+        for curLen in l:
+            if curLen > 0 and curLen < Lmin:
+                Lmin = curLen
+        return x + nx * Lmin, y + ny * Lmin
     
     def on_tick( self, data ):
         self.parseData( data )
@@ -315,11 +403,19 @@ class Strategy:
                     command = makeCommand( food.X, food.Y, 'to food' )
                 else:
                     # движемся в заданном напралении
-                    borderKey = self.getBorderKey()
-                    if self.direction is None or borderKey != '':
-                        self.direction = self.getNewDirectionToMove( borderKey )
-                    x = self.mine[0].X + cos( self.direction ) * 100
-                    y = self.mine[0].Y + sin( self.direction ) * 100
+                    # в свободном состоянии движемся по напралению скорости, если она есть
+                    VX, VY = self.currentSpeed()
+                    if VX == 0 and VY == 0:
+                        angle = 2 * pi * random()
+                        VX = cos( angle )
+                        VY = sin( angle )
+                    VX, VY = normalize( VX, VY )
+                    dx, dy = self.getBorderStandoff()
+                    if dx != 0 or dy != 0:
+                        VX += dx
+                        VY += dy
+                        VX, VY = normalize( VX, VY )
+                    x, y = self.setPointOnBorder( self.mine[0], VX, VY )
                     command = makeCommand( x, y, 'by direction' )
                 if self.isSplittable and self.timeFromLastContact > 50:
                     command['Split'] = True

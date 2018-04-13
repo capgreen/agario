@@ -64,3 +64,8 @@ LocalRunner- Socat.ini
 main_debug.py
 BadGames/visio_622930738.log
 *.log
+calcSpeed.py
+mainTestFreeMoving.py
+LocalRunnerDefault.ini
+calcSpeed - Copy.py
+testAngle.py
