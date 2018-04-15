@@ -1,5 +1,5 @@
 import json
-from math import sin, cos, sqrt, pi, atan
+from math import sin, cos, sqrt, pi, atan, atan2
 from random import random
 
 #константы и параметры
@@ -43,11 +43,25 @@ def initParams( data ):
     CORNERS.append( GameObject( { 'X': 0, 'Y': GAME_HEIGHT } ) )
 
 def makeCommand( x, y, debug ):
-        command = {}
-        command['X'] = x
-        command['Y'] = y
-        command['Debug'] = debug
-        return command;
+    command = {}
+    command['X'] = x
+    command['Y'] = y
+    command['Debug'] = debug
+    return command
+
+def maxTurnAngle( M, VX, VY ):
+    a = INERTION_FACTOR / M
+    V = sqrt( VX ** 2 + VY ** 2 )
+    Vmax = SPEED_FACTOR / sqrt( M )
+    # если скорость нуменьше пороговой - то можем развернуться в любои напрвалении
+    if V == 0 or V <= ( a * Vmax / ( 1 - a ) ):
+        return pi, pi
+    #проекции направления приложения силы на исходную скорость при максимальном повороте
+    nx = -a * Vmax / ( ( 1 - a ) * V ) 
+    ny = sqrt( 1 - nx ** 2 ) 
+    Vxnext = V * ( 1 - a ) + a * Vmax * nx
+    Vynext = a * Vmax * ny
+    return atan2( Vynext, Vxnext ), atan2( ny, nx )  
     
 def distance( a, b ):
     return sqrt( ( a.X - b.X ) ** 2 + ( a.Y - b.Y ) ** 2 )
@@ -116,6 +130,104 @@ class MinePart( PlayerPart ):
             nx, ny = normalize( nx, ny )
         return nx, ny
     
+    # вычисление направления приложения силы для максимального поворота к заданной точке
+    def getTurnAngleToTarget( self, X0, Y0, Vx, Vy, Xt, Yt ):
+        x = Xt - X0
+        y = Yt - Y0
+        # угол к точке
+        angle = atan2( y, x )
+        if Vx == 0 and Vy == 0:
+            # если скорость нулевая - сразу движемся в направлении цели
+            return angle
+        # вычисляем угол относительно совего направления
+        a = INERTION_FACTOR / self.M
+        V = sqrt( Vx ** 2 + Vy ** 2 )
+        Vmax = self.MaxSpeed
+        # направление скорости
+        selfAngle = atan2( Vy, Vx )
+        # угол между скоростью и направлением на точку
+        angle -= selfAngle
+        nxmax = a * Vmax / ( (1 - a) * V )
+        cosAngle = cos( angle )
+        # выбираем угол, который даст максимальную скорость
+        nx1 = ( cosAngle ** 2 - 1 + cosAngle * sqrt( nxmax ** 2 + cosAngle ** 2 - 1 ) ) / nxmax
+        if angle >= 0:
+            ny1 = sqrt( 1 - nx1 ** 2 )
+        else:
+            ny1 = -sqrt( 1 - nx1 ** 2 )
+        vx1 = ( 1 - a ) * V + a * nx1 * Vmax
+        vy1 = a * ny1 * Vmax
+        v1 = sqrt( vx1 ** 2 + vy1 ** 2 )
+        nx2 = ( cosAngle ** 2 - 1 - cosAngle * sqrt( nxmax ** 2 + cosAngle ** 2 - 1 ) ) / nxmax
+        if angle >= 0:
+            ny2 = sqrt( 1 - nx2 ** 2 )
+        else:
+            ny2 = -sqrt( 1 - nx2 ** 2 )
+        vx2 = ( 1 - a ) * V + a * nx2 * Vmax
+        vy2 = a * ny2 * Vmax
+        v2 = sqrt( vx2 ** 2 + vy2 ** 2 )
+        if v1 >= v2:
+            return atan2( ny1, nx1 ) + selfAngle
+        else:
+            return atan2( ny2, nx2 ) + selfAngle
+    
+    # оценка времени достижения заданного объекта с полным перекрытием его
+    # при использовании поворотов на максимальный возможный угол
+    # оценка времени достижения заданного объекта с полным перекрытием его
+    def getTimeToTargetExt( self, target ):
+        captureDistance = self.R - target.R
+        T = 0
+        X0 = self.X
+        Y0 = self.Y
+        Vx0 = self.VX
+        Vy0 = self.VY
+        curDistance = sqrt( (self.X - target.X)**2 + (self.Y - target.Y)**2 )
+        prevDistance = curDistance
+        while curDistance > captureDistance and T < 100:
+            targetAngleSize = atan( captureDistance / curDistance )
+            X0, Y0, Vx0, Vy0, curDistance = self.stepToTargetExt( X0, Y0, Vx0, Vy0, target.X, target.Y, targetAngleSize )
+            if prevDistance < curDistance:
+                return GAME_TICKS
+            prevDistance = curDistance
+            T += 1
+        return T
+        
+    def stepToTargetExt( self, X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize ):
+        t = self.getBestDirectionToTargetExt( X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize )
+        Vmax = self.MaxSpeed
+        a = INERTION_FACTOR / self.M
+        Vx1 = (1 - a)*Vx0 + a * Vmax * cos(t)
+        Vy1 = (1 - a)*Vy0 + a * Vmax * sin(t)
+        X1 = X0 + Vx1
+        Y1 = Y0 + Vy1
+        return X1, Y1, Vx1, Vy1, sqrt( (X1 - Xt)**2 + (Y1 - Yt)**2  )
+    
+    # направление приложения силы для максимального уменьшения угла до цели
+    def getBestDirectionToTargetExt( self, X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize ):
+        # угол от нас до цели
+        angle = atan2( Yt - Y0, Xt - X0 )
+        Vx = Vx0
+        Vy = Vy0
+        # угол нашей скорости
+        direction = atan2( Vy, Vx )
+        # цгол между нашей скоростью и целью
+        deltaAngle = angle - direction
+        # если цель попдает в створ - прсото едем вперед
+        if abs(deltaAngle) < targetAngleSize:
+            return direction
+        turnAngle = 0
+        maxAngle, turnDirection = maxTurnAngle( self.M, Vx, Vy )
+        if abs(deltaAngle) < maxAngle:
+            # если можем доврнуть на цель то доворачиваем
+            turnAngle = self.getTurnAngleToTarget( X0, Y0, Vx, Vy, Xt, Yt  )
+        else:
+            # если цель находится за допустимымы пределами - доворачиваем на максимальный угол
+            if deltaAngle >= 0:
+                turnAngle = turnDirection + direction
+            else:
+                turnAngle = -turnDirection + direction
+        return turnAngle    
+    
     # оценка времени достижения заданного объекта с перекрытием его на 2/3 его диаметра
     def getTimeToTarget( self, target ):
         captureDistance = self.R - target.R
@@ -126,10 +238,10 @@ class MinePart( PlayerPart ):
         Vy0 = self.VY
         curDistance = sqrt( (self.X - target.X)**2 + (self.Y - target.Y)**2 )
         prevDistance = curDistance
-        while curDistance > captureDistance and T < 100:
+        while curDistance > captureDistance:
             X0, Y0, Vx0, Vy0, curDistance = self.stepToTarget( X0, Y0, Vx0, Vy0, target.X, target.Y )
-            if prevDistance < curDistance:
-                return 100
+            if prevDistance < curDistance or T > 50:
+                return GAME_TICKS
             prevDistance = curDistance
             T += 1
         return T
@@ -211,7 +323,7 @@ class Strategy:
     def parseData( self, data ):
         mine, objects = data.get( 'Mine' ), data.get( 'Objects' )
         self.mine.clear()
-        self.minSelfRadius = sqrt( GAME_HEIGHT ** 2 + GAME_WIDTH ** 2 );
+        self.minSelfRadius = sqrt( GAME_HEIGHT ** 2 + GAME_WIDTH ** 2 )
         self.left = GAME_WIDTH
         self.right = 0
         self.top = GAME_HEIGHT
@@ -241,7 +353,9 @@ class Strategy:
         for o in objects:
             objectType = o.get( 'T' )
             if objectType == 'F':
-                self.food.append( Food( o ) )
+                food = Food( o )
+                if self.isFoodReachable( food ):
+                    self.food.append( food )
             elif objectType == 'E':
                 self.ejection.append( Ejection( o ) )
             elif objectType == 'V':
@@ -392,20 +506,27 @@ class Strategy:
         bestMine = None
         for m in self.mine:
             for f in self.food:
-                t = m.getTimeToTarget( f )
+                # игнорируем еду, которая осталась у нас за спиной
+                foodAngle = atan2( f.Y - m.Y, f.X - m.X )
+                mineAngle = atan2( m.VY, m.VX )
+                if abs( foodAngle - mineAngle ) > pi / 2:
+                    continue
+                t = m.getTimeToTargetExt( f )
                 if t < minTime:
                     bestMine = m
                     bestFood = f
                     minTime = t
-        if minTime >= 100:
-            return self.moveFree()
-        t = bestMine.getBestDirectionToTarget( bestMine.X, bestMine.Y, bestMine.VX, bestMine.VY, bestFood.X, bestFood.Y )
+        if minTime >= GAME_TICKS:
+            return self.makeFreeMove()
+        distance = bestMine.distance( bestFood )
+        targetAngleSize = atan( ( bestMine.R - bestFood.R ) / distance )
+        t = bestMine.getBestDirectionToTargetExt( bestMine.X, bestMine.Y, bestMine.VX, bestMine.VY, bestFood.X, bestFood.Y, targetAngleSize )
         nx = cos(t)
         ny = sin(t)
         x, y = self.setPointOnBorder( bestMine, nx, ny )
         return makeCommand( x, y, 'to food' )
     
-    def moveFree( self ):
+    def makeFreeMove( self ):
         # движемся в заданном напралении
         # в свободном состоянии движемся по напралению скорости, если она есть
         VX, VY = self.currentSpeed()
@@ -420,7 +541,7 @@ class Strategy:
             VY += dy
             VX, VY = normalize( VX, VY )
         x, y = self.setPointOnBorder( self.mine[0], VX, VY )
-        return makeCommand( x, y, 'by direction' )
+        return makeCommand( x, y, 'free move' )
     
     def on_tick( self, data ):
         self.parseData( data )
@@ -431,17 +552,17 @@ class Strategy:
             if len( self.dangerous ) > 0:
                  #избегаем опасных соседей
                  self.runPoint = self.getRunPoint()
-                 command = makeCommand( self.runPoint.X, self.runPoint.Y, 'run' )
+                 command = makeCommand( self.runPoint.X, self.runPoint.Y, 'run out' )
             elif len( self.eatable ) > 0:
                  #пытаемся съесть конкурента если можем
                  attackPoint = self.getAttackPoint()
-                 command = makeCommand( attackPoint.X, attackPoint.Y, 'run' )
+                 command = makeCommand( attackPoint.X, attackPoint.Y, 'attack' )
             else:
                 if len( self.food ) > 0:
                     # пытаемся съесть еду если видно
                     command = self.moveToFood()
                 else:
-                    command = self.moveFree()
+                    command = self.makeFreeMove()
                 if self.isSplittable and self.timeFromLastContact > 50:
                     command['Split'] = True
         # нужно скорректировать для случая близости к границе

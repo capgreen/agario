@@ -69,3 +69,5 @@ mainTestFreeMoving.py
 LocalRunnerDefault.ini
 calcSpeed - Copy.py
 testAngle.py
+byPosition.mcdx
+*.mcdx
