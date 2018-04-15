@@ -1,5 +1,5 @@
 import json
-from math import sin, cos, sqrt, pi
+from math import sin, cos, sqrt, pi, atan
 from random import random
 
 #константы и параметры
@@ -59,17 +59,6 @@ def normalize( x, y ):
     else:
         return x / l, y / l
 
-directionRange = {
-            'TOP': [0.0, pi],
-            'TOPRIGHT': [0.5 * pi, 0.5 * pi],
-            'RIGHT': [0.5 * pi, pi],
-            'BOTTOMRIGHT': [pi, 0.5 * pi],
-            'BOTTOM': [pi, pi],
-            'BOTTOMLEFT': [1.5 * pi, 0.5 * pi],
-            'LEFT': [1.5*pi, pi],
-            'TOPLEFT': [0.0, 0.5*pi]
-        }
-
 class GameObject:
     def __init__( self, data ):
         self.X = data.get( 'X' )
@@ -98,25 +87,16 @@ class MinePart( PlayerPart ):
         super().__init__( data )
         self.VX = data.get( 'SX' )
         self.VY = data.get( 'SY' )
+        self.V = sqrt( self.VX ** 2 + self.VY ** 2 )
+        self.vx, self.vy = normalize( self.VX, self.VY )
         # таймер слияния - может отсутствовать
         if 'TTF' in data:
             self.TTF = data.get( 'TTF' ) 
         else:
             self.TTF = 0
-        self.StopDistance = self.stopDistance()
+        self.MaxSpeed = self.maxSpeed()
+        self.Speed = sqrt( self.VX ** 2 + self.VY ** 2 )
         
-    # минимальное расстояние на котором объект может остановиться 
-    # после движения на полной скорости
-    def stopDistance( self ):
-        alpha = INERTION_FACTOR / self.M
-        Vmax = self.maxSpeed()
-        V = Vmax
-        d = 0
-        while V > 0:
-            V = V + ( -Vmax - V ) * alpha
-            d += V
-        return d
-    
     def distanceToBorder( self ):
         return min( [self.X, GAME_WIDTH - self.X, self.Y, GAME_HEIGHT - self.Y ] )
     
@@ -135,18 +115,75 @@ class MinePart( PlayerPart ):
         if nx != 0 or ny != 0:
             nx, ny = normalize( nx, ny )
         return nx, ny
+    
+    # оценка времени достижения заданного объекта с перекрытием его на 2/3 его диаметра
+    def getTimeToTarget( self, target ):
+        captureDistance = self.R - target.R
+        T = 0
+        X0 = self.X
+        Y0 = self.Y
+        Vx0 = self.VX
+        Vy0 = self.VY
+        curDistance = sqrt( (self.X - target.X)**2 + (self.Y - target.Y)**2 )
+        prevDistance = curDistance
+        while curDistance > captureDistance and T < 100:
+            X0, Y0, Vx0, Vy0, curDistance = self.stepToTarget( X0, Y0, Vx0, Vy0, target.X, target.Y )
+            if prevDistance < curDistance:
+                return 100
+            prevDistance = curDistance
+            T += 1
+        return T
+        
+    def stepToTarget( self, X0, Y0, Vx0, Vy0, Xt, Yt ):
+        t = self.getBestDirectionToTarget( X0, Y0, Vx0, Vy0, Xt, Yt )
+        Vmax = self.MaxSpeed
+        a = INERTION_FACTOR / self.M
+        Vx1 = (1 - a)*Vx0 + a * Vmax * cos(t)
+        Vy1 = (1 - a)*Vy0 + a * Vmax * sin(t)
+        X1 = X0 + Vx1
+        Y1 = Y0 + Vy1
+        return X1, Y1, Vx1, Vy1, sqrt( (X1 - Xt)**2 + (Y1 - Yt)**2  )
+    
+    # направление приложения силы для максимального приближения к цели
+    def getBestDirectionToTarget( self, X0, Y0, Vx0, Vy0, Xt, Yt ):
+        # координаты цели относительно нас
+        X = Xt - X0
+        Y = Yt - Y0
+        Vx = Vx0
+        Vy = Vy0
+        V = sqrt( Vx ** 2 + Vy ** 2 )
+        L = sqrt( X ** 2 + Y ** 2 )
+        a = INERTION_FACTOR / self.M
+        Vmax = SPEED_FACTOR / sqrt( self.M )
+        # экстремальные углы
+        k1 = sqrt( (a - 1)**2 * V * V + 2 * ( a - 1 ) * ( X * Vx + Y * Vy ) + L ** 2 )
+        k2 = (1 - a) * Vx - X
+        k3 = Y - (1 - a) * Vy
+        t1 = 2 * atan( ( k1 + k2 ) / k3 )
+        t2 = -2 * atan( ( k1 - k2 ) / k3 )
+        # результаты для первого угла
+        X1 = (1 - a)*Vx + a * Vmax * cos(t1)
+        Y1 = (1 - a)*Vy + a * Vmax * sin(t1)
+        L1 = sqrt( ( X - X1 ) ** 2 + ( Y - Y1 ) ** 2 )
+        # результаты для второго угла
+        X2 = (1 - a)*Vx + a * Vmax * cos(t2)
+        Y2 = (1 - a)*Vy + a * Vmax * sin(t2)
+        L2 = sqrt( ( X - X2 ) ** 2 + ( Y - Y2 ) ** 2 )
+        tmin = t1 # угол приложения силы, который приведет к максимальному приближению к цели
+        if L1 > L2:
+            tmin = t2
+        return tmin
             
 class Food( GameObject ):
     def __init__( self, data ):
         super().__init__( data )
+        self.R = FOOD_RADIUS
 
 class Ejection( GameObject ):
     def __init__( self, data ):
         super().__init__( data )
         self.pId = data.get( 'pId' )
     
-
-
 class Strategy:
     
     def __init__( self ):
@@ -248,7 +285,7 @@ class Strategy:
         else:
             return food.X > ( FOOD_RADIUS / 6 ) and food.X < ( GAME_WIDTH - FOOD_RADIUS / 6 ) and food.Y > ( FOOD_RADIUS / 6 ) and food.Y < ( GAME_HEIGHT - FOOD_RADIUS / 6 )
         
-    def get_nearest_food( self ):
+    def getNearestFood( self ):
         nearest = None
         minDist = self.fieldDiameter
         for food in self.food:
@@ -261,43 +298,10 @@ class Strategy:
                     nearest = food
         return nearest
     
-    def getBorderKey( self ):
-        borderKey = ''
-        if self.top <= 2:
-            borderKey += 'TOP'
-        elif self.bottom >= GAME_HEIGHT - 2:
-            borderKey += 'BOTTOM'
-        if self.left <= 2:
-            borderKey += 'LEFT'
-        elif self.right >= GAME_WIDTH - 2:
-            borderKey += 'RIGHT'
-        return borderKey
-    
-    def isOnBorder( self ):
-        return self.top <= 0 or self.bottom >= GAME_HEIGHT or self.left <= 0 or self.right >= GAME_WIDTH
-    
     # ищем минимальное расстояние между своими частями и заданным объектом
     def distance( self, obj ):
         return min( map( (lambda x: x.distance( obj ) ), self.mine ) )
             
-    def getNewPointToMove( self ):
-        x = self.minSelfRadius + random() * ( GAME_WIDTH - self.minSelfRadius * 2 )
-        y = self.minSelfRadius + random() * ( GAME_HEIGHT - self.minSelfRadius * 2 )
-        point = GameObject( { 'X': x, 'Y': y } )
-        while self.distance( point ) <= self.minSelfRadius:
-            x = self.minSelfRadius + random() * ( GAME_WIDTH - self.minSelfRadius * 2 )
-            y = self.minSelfRadius + random() * ( GAME_HEIGHT - self.minSelfRadius * 2 )
-            point = GameObject( { 'X': x, 'Y': y } )
-        return point
-    
-    def getNewDirectionToMove( self, borderKey ):
-        if borderKey == '':
-            return random() * 2.0 * pi
-        else:
-            dRange = directionRange[borderKey]
-            direction = dRange[0] + random() * dRange[1]
-            return direction
-    
     # ищем единичный вектор отталкивания от границ
     # от границ отталкиваемся по нормали 
     def getBorderStandoff( self ):
@@ -382,6 +386,42 @@ class Strategy:
                 Lmin = curLen
         return x + nx * Lmin, y + ny * Lmin
     
+    def moveToFood( self ):
+        minTime = GAME_TICKS
+        bestFood = None
+        bestMine = None
+        for m in self.mine:
+            for f in self.food:
+                t = m.getTimeToTarget( f )
+                if t < minTime:
+                    bestMine = m
+                    bestFood = f
+                    minTime = t
+        if minTime >= 100:
+            return self.moveFree()
+        t = bestMine.getBestDirectionToTarget( bestMine.X, bestMine.Y, bestMine.VX, bestMine.VY, bestFood.X, bestFood.Y )
+        nx = cos(t)
+        ny = sin(t)
+        x, y = self.setPointOnBorder( bestMine, nx, ny )
+        return makeCommand( x, y, 'to food' )
+    
+    def moveFree( self ):
+        # движемся в заданном напралении
+        # в свободном состоянии движемся по напралению скорости, если она есть
+        VX, VY = self.currentSpeed()
+        if VX == 0 and VY == 0:
+            angle = 2 * pi * random()
+            VX = cos( angle )
+            VY = sin( angle )
+        VX, VY = normalize( VX, VY )
+        dx, dy = self.getBorderStandoff()
+        if dx != 0 or dy != 0:
+            VX += dx
+            VY += dy
+            VX, VY = normalize( VX, VY )
+        x, y = self.setPointOnBorder( self.mine[0], VX, VY )
+        return makeCommand( x, y, 'by direction' )
+    
     def on_tick( self, data ):
         self.parseData( data )
         command = {}
@@ -397,26 +437,11 @@ class Strategy:
                  attackPoint = self.getAttackPoint()
                  command = makeCommand( attackPoint.X, attackPoint.Y, 'run' )
             else:
-                food = self.get_nearest_food()
-                if food:
+                if len( self.food ) > 0:
                     # пытаемся съесть еду если видно
-                    command = makeCommand( food.X, food.Y, 'to food' )
+                    command = self.moveToFood()
                 else:
-                    # движемся в заданном напралении
-                    # в свободном состоянии движемся по напралению скорости, если она есть
-                    VX, VY = self.currentSpeed()
-                    if VX == 0 and VY == 0:
-                        angle = 2 * pi * random()
-                        VX = cos( angle )
-                        VY = sin( angle )
-                    VX, VY = normalize( VX, VY )
-                    dx, dy = self.getBorderStandoff()
-                    if dx != 0 or dy != 0:
-                        VX += dx
-                        VY += dy
-                        VX, VY = normalize( VX, VY )
-                    x, y = self.setPointOnBorder( self.mine[0], VX, VY )
-                    command = makeCommand( x, y, 'by direction' )
+                    command = self.moveFree()
                 if self.isSplittable and self.timeFromLastContact > 50:
                     command['Split'] = True
         # нужно скорректировать для случая близости к границе
