@@ -132,10 +132,8 @@ class MinePart( PlayerPart ):
     
     # вычисление направления приложения силы для максимального поворота к заданной точке
     def getTurnAngleToTarget( self, X0, Y0, Vx, Vy, Xt, Yt ):
-        x = Xt - X0
-        y = Yt - Y0
         # угол к точке
-        angle = atan2( y, x )
+        angle = atan2( Yt - Y0, Xt - X0 )
         if Vx == 0 and Vy == 0:
             # если скорость нулевая - сразу движемся в направлении цели
             return angle
@@ -190,6 +188,7 @@ class MinePart( PlayerPart ):
                 return GAME_TICKS
             prevDistance = curDistance
             T += 1
+            # обрезаем поиск ,если уже найдена еда до которой можно добраться быстрее
             if T >= bestTime:
                 return GAME_TICKS
         return T
@@ -292,7 +291,6 @@ class Food( GameObject ):
     def __init__( self, data ):
         super().__init__( data )
         self.R = FOOD_RADIUS
-        self.BestTime = GAME_TICKS
 
 class Ejection( GameObject ):
     def __init__( self, data ):
@@ -514,8 +512,7 @@ class Strategy:
                 mineAngle = atan2( m.VY, m.VX )
                 if abs( foodAngle - mineAngle ) > pi / 2:
                     continue
-                t = m.getTimeToTargetExt( f, f.BestTime )
-                f.BestTime = min( t, f.BestTime )
+                t = m.getTimeToTargetExt( f, minTime )
                 if t < minTime:
                     bestMine = m
                     bestFood = f
