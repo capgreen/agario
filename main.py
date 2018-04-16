@@ -174,7 +174,7 @@ class MinePart( PlayerPart ):
     # оценка времени достижения заданного объекта с полным перекрытием его
     # при использовании поворотов на максимальный возможный угол
     # оценка времени достижения заданного объекта с полным перекрытием его
-    def getTimeToTargetExt( self, target ):
+    def getTimeToTargetExt( self, target, bestTime ):
         captureDistance = self.R - target.R
         T = 0
         X0 = self.X
@@ -190,6 +190,8 @@ class MinePart( PlayerPart ):
                 return GAME_TICKS
             prevDistance = curDistance
             T += 1
+            if T >= bestTime:
+                return GAME_TICKS
         return T
         
     def stepToTargetExt( self, X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize ):
@@ -290,6 +292,7 @@ class Food( GameObject ):
     def __init__( self, data ):
         super().__init__( data )
         self.R = FOOD_RADIUS
+        self.BestTime = GAME_TICKS
 
 class Ejection( GameObject ):
     def __init__( self, data ):
@@ -511,7 +514,8 @@ class Strategy:
                 mineAngle = atan2( m.VY, m.VX )
                 if abs( foodAngle - mineAngle ) > pi / 2:
                     continue
-                t = m.getTimeToTargetExt( f )
+                t = m.getTimeToTargetExt( f, f.BestTime )
+                f.BestTime = min( t, f.BestTime )
                 if t < minTime:
                     bestMine = m
                     bestFood = f
