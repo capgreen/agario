@@ -1,5 +1,5 @@
 import json
-from math import sin, cos, sqrt, pi, atan, atan2
+from math import sin, cos, sqrt, pi, atan, atan2, acos
 from random import random
 
 #константы и параметры
@@ -91,6 +91,8 @@ class PlayerPart( Virus ):
     def __init__( self, data ):
         super().__init__( data )
         self.R = data.get( 'R' )
+        self.VX = 0
+        self.VY = 0
     
     # максимальная скорость игрока
     def maxSpeed( self ):
@@ -110,22 +112,23 @@ class MinePart( PlayerPart ):
             self.TTF = 0
         self.MaxSpeed = self.maxSpeed()
         self.Speed = sqrt( self.VX ** 2 + self.VY ** 2 )
+        self.MaxTurnAngle, _ = maxTurnAngle( self.M, self.VX, self.VY )
         
     def distanceToBorder( self ):
         return min( [self.X, GAME_WIDTH - self.X, self.Y, GAME_HEIGHT - self.Y ] )
     
     def borderStandoff( self ):
-        minDistance = self.R + 50.0
+        minDistance = self.R + 100.0
         nx = 0.0
         ny = 0.0
         if self.X < minDistance:
-            nx = 1.0 / ( 2 + self.X )
+            nx = 10.0 / ( 2 + self.X )
         elif self.X > GAME_WIDTH - minDistance:
-            nx = -1.0 / ( 2 + GAME_WIDTH - self.X )
+            nx = -10.0 / ( 2 + GAME_WIDTH - self.X )
         if self.Y < minDistance:
-            ny = 1.0 / ( 2 + self.Y )
+            ny = 10.0 / ( 2 + self.Y )
         elif self.Y > GAME_HEIGHT - minDistance:
-            ny = -1.0 / ( 2 + GAME_HEIGHT - self.Y )
+            ny = -10.0 / ( 2 + GAME_HEIGHT - self.Y )
         if nx != 0 or ny != 0:
             nx, ny = normalize( nx, ny )
         return nx, ny
@@ -172,7 +175,7 @@ class MinePart( PlayerPart ):
     # оценка времени достижения заданного объекта с полным перекрытием его
     # при использовании поворотов на максимальный возможный угол
     # оценка времени достижения заданного объекта с полным перекрытием его
-    def getTimeToTargetExt( self, target, bestTime ):
+    def getTimeToTarget( self, target, bestTime ):
         captureDistance = self.R - target.R
         T = 0
         X0 = self.X
@@ -183,7 +186,7 @@ class MinePart( PlayerPart ):
         prevDistance = curDistance
         while curDistance > captureDistance and T < 100:
             targetAngleSize = atan( captureDistance / curDistance )
-            X0, Y0, Vx0, Vy0, curDistance = self.stepToTargetExt( X0, Y0, Vx0, Vy0, target.X, target.Y, targetAngleSize )
+            X0, Y0, Vx0, Vy0, curDistance = self.stepToTarget( X0, Y0, Vx0, Vy0, target.X, target.Y, targetAngleSize )
             if prevDistance < curDistance:
                 return GAME_TICKS
             prevDistance = curDistance
@@ -193,8 +196,8 @@ class MinePart( PlayerPart ):
                 return GAME_TICKS
         return T
         
-    def stepToTargetExt( self, X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize ):
-        t = self.getBestDirectionToTargetExt( X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize )
+    def stepToTarget( self, X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize ):
+        t = self.getBestDirectionToTarget( X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize )
         Vmax = self.MaxSpeed
         a = INERTION_FACTOR / self.M
         Vx1 = (1 - a)*Vx0 + a * Vmax * cos(t)
@@ -204,7 +207,7 @@ class MinePart( PlayerPart ):
         return X1, Y1, Vx1, Vy1, sqrt( (X1 - Xt)**2 + (Y1 - Yt)**2  )
     
     # направление приложения силы для максимального уменьшения угла до цели
-    def getBestDirectionToTargetExt( self, X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize ):
+    def getBestDirectionToTarget( self, X0, Y0, Vx0, Vy0, Xt, Yt, targetAngleSize ):
         # угол от нас до цели
         angle = atan2( Yt - Y0, Xt - X0 )
         Vx = Vx0
@@ -229,36 +232,8 @@ class MinePart( PlayerPart ):
                 turnAngle = -turnDirection + direction
         return turnAngle    
     
-    # оценка времени достижения заданного объекта с перекрытием его на 2/3 его диаметра
-    def getTimeToTarget( self, target ):
-        captureDistance = self.R - target.R
-        T = 0
-        X0 = self.X
-        Y0 = self.Y
-        Vx0 = self.VX
-        Vy0 = self.VY
-        curDistance = sqrt( (self.X - target.X)**2 + (self.Y - target.Y)**2 )
-        prevDistance = curDistance
-        while curDistance > captureDistance:
-            X0, Y0, Vx0, Vy0, curDistance = self.stepToTarget( X0, Y0, Vx0, Vy0, target.X, target.Y )
-            if prevDistance < curDistance or T > 50:
-                return GAME_TICKS
-            prevDistance = curDistance
-            T += 1
-        return T
-        
-    def stepToTarget( self, X0, Y0, Vx0, Vy0, Xt, Yt ):
-        t = self.getBestDirectionToTarget( X0, Y0, Vx0, Vy0, Xt, Yt )
-        Vmax = self.MaxSpeed
-        a = INERTION_FACTOR / self.M
-        Vx1 = (1 - a)*Vx0 + a * Vmax * cos(t)
-        Vy1 = (1 - a)*Vy0 + a * Vmax * sin(t)
-        X1 = X0 + Vx1
-        Y1 = Y0 + Vy1
-        return X1, Y1, Vx1, Vy1, sqrt( (X1 - Xt)**2 + (Y1 - Yt)**2  )
-    
-    # направление приложения силы для максимального приближения к цели
-    def getBestDirectionToTarget( self, X0, Y0, Vx0, Vy0, Xt, Yt ):
+    # направление приложения силы для максимального отдаления от цели
+    def getBestDirectionFromTarget( self, X0, Y0, Vx0, Vy0, Xt, Yt ):
         # координаты цели относительно нас
         X = Xt - X0
         Y = Yt - Y0
@@ -282,10 +257,10 @@ class MinePart( PlayerPart ):
         X2 = (1 - a)*Vx + a * Vmax * cos(t2)
         Y2 = (1 - a)*Vy + a * Vmax * sin(t2)
         L2 = sqrt( ( X - X2 ) ** 2 + ( Y - Y2 ) ** 2 )
-        tmin = t1 # угол приложения силы, который приведет к максимальному приближению к цели
-        if L1 > L2:
-            tmin = t2
-        return tmin
+        tmax = t1 # угол приложения силы, который приведет к максимальному удалению от цели
+        if L1 < L2:
+            tmax = t2
+        return tmax
             
 class Food( GameObject ):
     def __init__( self, data ):
@@ -319,7 +294,11 @@ class Strategy:
         self.totalMass = 0
         self.timeFromLastContact = 1000 #время с момента последнего наблюдения противника
         self.corners = [] # углы карты - не рекомендуется убегать в угол
-    
+        self.prevCoords = {} # координаты противников на предидущем ходу
+        self.runCount = 0 # оставшееся время убегания - после пропадания охотника
+        self.dXrun = None # направление убегания
+        self.dYrun = None
+        self.runOutPart = None # часть которая убегает
         
     def parseData( self, data ):
         mine, objects = data.get( 'Mine' ), data.get( 'Objects' )
@@ -363,9 +342,13 @@ class Strategy:
                 self.virus.append( Virus( o ) )
             elif objectType == 'P':
                 p = PlayerPart( o )
+                if p.Id in self.prevCoords:
+                    prevCoords = self.prevCoords[p.Id]
+                    p.VX = p.X - prevCoords[0]
+                    p.VY = p.Y - prevCoords[1]
                 if minMass * 1.2 < p.M:
                     self.dangerous.append( p )
-                elif minMass > p.M * 1.2:
+                elif self.isEatable( p ):
                     self.eatable.append( p )
                 else:
                     self.player.append( p )
@@ -373,6 +356,13 @@ class Strategy:
             self.timeFromLastContact = 0
         else:
             self.timeFromLastContact += 1
+        self.prevCoords.clear()
+        for p in self.dangerous:
+            self.prevCoords[p.Id] = [ p.X, p.Y ]
+        for p in self.eatable:
+            self.prevCoords[p.Id] = [ p.X, p.Y ]
+        for p in self.player:
+            self.prevCoords[p.Id] = [ p.X, p.Y ]
             
     def run( self ):
         initParams( json.loads( input() ) )
@@ -382,6 +372,35 @@ class Strategy:
             cmd = self.on_tick( data )
             print( json.dumps(cmd) )
 
+    # определяем интерес к куску противника
+    def isEatable( self, player ):
+        # ближайшая к игроку наша часть больше него по массе
+        minDist = None
+        nearest = None
+        for m in self.mine:
+            if nearest is None:
+                nearest = m
+                minDist = m.distance( player )
+            else:
+                curDist = m.distance( player )
+                if curDist < minDist:
+                    nearest = m
+                    minDist = curDist
+        player.Nearest = nearest
+        player.Distance = minDist
+        if player.M * 1.2 >= nearest.M:
+            return False
+        # направление от игрока на нас
+        dx, dy = normalize( nearest.X - player.X, nearest.Y - player.Y )
+        vx = player.VX
+        vy = player.VY
+        v = sqrt( vx ** 2 + vy ** 2 )
+        if v == 0:
+            return True
+        vx, vy = normalize( vx, vy )
+        dotProduct = dx * vx + dy * vy
+        return dotProduct >= 0 or v < SPEED_FACTOR / ( 2 * sqrt(nearest.M) )
+        
     def isFoodReachable( self, food ):
         effectiveRadius = self.minSelfRadius - FOOD_RADIUS / 6
         # для угла (0, 0)
@@ -400,19 +419,6 @@ class Strategy:
         else:
             return food.X > ( FOOD_RADIUS / 6 ) and food.X < ( GAME_WIDTH - FOOD_RADIUS / 6 ) and food.Y > ( FOOD_RADIUS / 6 ) and food.Y < ( GAME_HEIGHT - FOOD_RADIUS / 6 )
         
-    def getNearestFood( self ):
-        nearest = None
-        minDist = self.fieldDiameter
-        for food in self.food:
-            if not self.isFoodReachable( food ):
-                continue
-            for m in self.mine:
-                dist = m.distance( food )
-                if dist < minDist:
-                    minDist = dist
-                    nearest = food
-        return nearest
-    
     # ищем минимальное расстояние между своими частями и заданным объектом
     def distance( self, obj ):
         return min( map( (lambda x: x.distance( obj ) ), self.mine ) )
@@ -429,49 +435,6 @@ class Strategy:
                 dx, dy = m.borderStandoff()
                 dMin = d
         return dx, dy
-    
-    # ищем пару опасный противник - своя часть с минимальным расстоянием
-    # убегать будем по направлени, соединяющему центры этой пары
-    def getRunPoint( self ):
-        minDistance = 10000
-        mineEnd = None
-        enemyEnd = None
-        for mine in self.mine:
-            for enemy in self.dangerous:
-                distance = mine.distance( enemy )
-                if minDistance > distance:
-                    mineEnd = mine
-                    enemyEnd = enemy
-                    minDistance = distance
-        dx = mineEnd.X - enemyEnd.X
-        dy = mineEnd.Y - enemyEnd.Y
-        # единичный вектор от противника к нам
-        dx, dy = normalize( dx, dy )
-        # вектор отталкивания от границ
-        sx, sy = self.getBorderStandoff()
-        dx += sx
-        dy += sy
-        dx, dy = normalize( dx, dy )
-        x, y = self.setPointOnBorder( self.mine[0], dx, dy )
-        return GameObject( { 'X': x, 'Y': y } )
-    
-    def getAttackPoint( self ):
-        minDistance = 10000
-        mineEnd = None
-        enemyEnd = None
-        for mine in self.mine:
-            for enemy in self.eatable:
-                distance = mine.distance( enemy )
-                if minDistance > distance:
-                    mineEnd = mine
-                    enemyEnd = enemy
-                    minDistance = distance
-        dx = enemyEnd.X - mineEnd.X
-        dy = enemyEnd.Y - mineEnd.Y
-        d = sqrt( dx ** 2 + dy ** 2 )
-        x = mineEnd.X + ( dx * 100.0 / d )
-        y = mineEnd.Y + ( dy * 100.0 / d )
-        return GameObject( { 'X': x, 'Y': y } )
     
     def currentSpeed( self ):
         VX = 0
@@ -500,6 +463,62 @@ class Strategy:
             if curLen > 0 and curLen < Lmin:
                 Lmin = curLen
         return x + nx * Lmin, y + ny * Lmin
+
+    # ищем пару опасный противник - своя часть с минимальным расстоянием
+    # убегать будем по направлени, соединяющему центры этой пары
+    def runOut( self ):
+        minDistance = 10000
+        mineEnd = None
+        enemyEnd = None
+        for mine in self.mine:
+            for enemy in self.dangerous:
+                distance = mine.distance( enemy )
+                if minDistance > distance:
+                    mineEnd = mine
+                    enemyEnd = enemy
+                    minDistance = distance
+        self.runOutPart = mineEnd
+        dx = mineEnd.X - enemyEnd.X
+        dy = mineEnd.Y - enemyEnd.Y
+        dx, dy = normalize( dx, dy )
+        self.runXd = dx
+        self.runYd = dy 
+        self.runCount = 50
+        # вектор отталкивания от границ
+        sx, sy = self.getBorderStandoff()
+        dx += sx
+        dy += sy
+        dx, dy = normalize( dx, dy )
+        dx, dy = self.setPointOnBorder( mineEnd, dx, dy )
+        return makeCommand( dx, dy, 'run out' )
+    
+    def runByDirection( self ):
+        self.runCount -= 1
+        dx = self.runXd
+        dy = self.runYd
+        mine = self.runOutPart
+        dx, dy = self.setPointOnBorder( mine, dx, dy )
+        return makeCommand( dx, dy, 'continue run out' )
+    
+    def attack( self ):
+        minDistance = 10000
+        target = None
+        # выбираем ближайшего среди съедобных
+        for enemy in self.eatable:
+            if target is None or minDistance > enemy.Distance:
+                target = enemy
+                minDistance = enemy.Distance
+        mine = target.Nearest
+        # минимальное время до жертвы
+        timeToTarget = target.Distance / mine.MaxSpeed
+        x = target.X + target.VX * timeToTarget
+        y = target.Y + target.VY * timeToTarget
+        targetAngleSize = atan( ( mine.R - target.R ) / target.Distance )
+        t = mine.getBestDirectionToTarget( mine.X, mine.Y, mine.VX, mine.VY, x, y, targetAngleSize )
+        dx = cos(t)
+        dy = sin(t)
+        x, y = self.setPointOnBorder( mine, dx, dy )
+        return makeCommand( x, y, 'attack' )
     
     def moveToFood( self ):
         minTime = GAME_TICKS
@@ -510,9 +529,9 @@ class Strategy:
                 # игнорируем еду, которая осталась у нас за спиной
                 foodAngle = atan2( f.Y - m.Y, f.X - m.X )
                 mineAngle = atan2( m.VY, m.VX )
-                if abs( foodAngle - mineAngle ) > pi / 2:
+                if abs( foodAngle - mineAngle ) > pi / 2: #m.MaxTurnAngle:
                     continue
-                t = m.getTimeToTargetExt( f, minTime )
+                t = m.getTimeToTarget( f, minTime )
                 if t < minTime:
                     bestMine = m
                     bestFood = f
@@ -521,7 +540,7 @@ class Strategy:
             return self.makeFreeMove()
         distance = bestMine.distance( bestFood )
         targetAngleSize = atan( ( bestMine.R - bestFood.R ) / distance )
-        t = bestMine.getBestDirectionToTargetExt( bestMine.X, bestMine.Y, bestMine.VX, bestMine.VY, bestFood.X, bestFood.Y, targetAngleSize )
+        t = bestMine.getBestDirectionToTarget( bestMine.X, bestMine.Y, bestMine.VX, bestMine.VY, bestFood.X, bestFood.Y, targetAngleSize )
         nx = cos(t)
         ny = sin(t)
         x, y = self.setPointOnBorder( bestMine, nx, ny )
@@ -551,13 +570,15 @@ class Strategy:
             command = makeCommand( 0, 0, 'game over' )
         else:
             if len( self.dangerous ) > 0:
-                 #избегаем опасных соседей
-                 self.runPoint = self.getRunPoint()
-                 command = makeCommand( self.runPoint.X, self.runPoint.Y, 'run out' )
+                #избегаем опасных соседей
+                command = self.runOut()
+            elif self.runCount > 0:
+                # если начали от кого-то убегать - продолжаем, пока не обнулится счетчик
+                command = self.runByDirection()
             elif len( self.eatable ) > 0:
-                 #пытаемся съесть конкурента если можем
-                 attackPoint = self.getAttackPoint()
-                 command = makeCommand( attackPoint.X, attackPoint.Y, 'attack' )
+                # пытаемся съесть конкурента если можем, преследовать нужно с упреждением
+                # но не пытаемся догнать, то, что догнать нельзя
+                command = self.attack()
             else:
                 if len( self.food ) > 0:
                     # пытаемся съесть еду если видно
