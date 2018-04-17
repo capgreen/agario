@@ -21,7 +21,6 @@ SCORE_FOOD = 1
 SCORE_ENEMY_PART = 10
 SCORE_ENEMY = 100
 SCORE_VIRUS_BURST = 2
-CORNERS = []
 
 def initParams( data ):
     global FOOD_MASS, GAME_HEIGHT, GAME_TICKS, GAME_WIDTH, INERTION_FACTOR, MAX_FRAGS_CNT, \
@@ -37,10 +36,6 @@ def initParams( data ):
     VIRUS_RADIUS = data.get( 'VIRUS_RADIUS' )
     VIRUS_SPLIT_MASS = data.get( 'VIRUS_SPLIT_MASS' )
     VISCOSITY = data.get( 'VISCOSITY' )
-    CORNERS.append( GameObject( { 'X': 0, 'Y': 0 } ) )
-    CORNERS.append( GameObject( { 'X': GAME_WIDTH, 'Y': 0 } ) )
-    CORNERS.append( GameObject( { 'X': GAME_WIDTH, 'Y': GAME_HEIGHT } ) )
-    CORNERS.append( GameObject( { 'X': 0, 'Y': GAME_HEIGHT } ) )
 
 def makeCommand( x, y, debug ):
     command = {}
@@ -115,7 +110,7 @@ class MinePart( PlayerPart ):
         self.MaxTurnAngle, _ = maxTurnAngle( self.M, self.VX, self.VY )
         
     def distanceToBorder( self ):
-        return min( [self.X, GAME_WIDTH - self.X, self.Y, GAME_HEIGHT - self.Y ] )
+        return min( [self.X - self.R, GAME_WIDTH - self.X - self.R, self.Y - self.R, GAME_HEIGHT - self.Y - self.R ] )
     
     def borderStandoff( self ):
         minDistance = self.R + 100.0
@@ -464,6 +459,9 @@ class Strategy:
                 Lmin = curLen
         return x + nx * Lmin, y + ny * Lmin
 
+    def distanceToBorder( self ):
+        return min( map( lambda x: x.distanceToBorder(), self.mine ) )
+        
     # ищем пару опасный противник - своя часть с минимальным расстоянием
     # убегать будем по направлени, соединяющему центры этой пары
     def runOut( self ):
@@ -493,6 +491,9 @@ class Strategy:
         return makeCommand( dx, dy, 'run out' )
     
     def runByDirection( self ):
+        if self.distanceToBorder() < 2:
+            self.runCount = 0
+            return self.makeFreeMove()
         self.runCount -= 1
         dx = self.runXd
         dy = self.runYd
