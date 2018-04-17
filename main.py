@@ -345,8 +345,7 @@ class Strategy:
                     self.dangerous.append( p )
                 elif self.isEatable( p ):
                     self.eatable.append( p )
-                else:
-                    self.player.append( p )
+                self.player.append( p )
         if len( self.dangerous ) > 0 or len( self.eatable ) > 0 or len( self.player ) > 0:
             self.timeFromLastContact = 0
         else:
@@ -488,7 +487,10 @@ class Strategy:
         dy += sy
         dx, dy = normalize( dx, dy )
         dx, dy = self.setPointOnBorder( mineEnd, dx, dy )
-        return makeCommand( dx, dy, 'run out' )
+        command = makeCommand( dx, dy, 'run out' )
+        if self.isSplittable:
+            command['Split'] = True
+        return command
     
     def runByDirection( self ):
         if self.distanceToBorder() < 2:
@@ -499,8 +501,19 @@ class Strategy:
         dy = self.runYd
         mine = self.runOutPart
         dx, dy = self.setPointOnBorder( mine, dx, dy )
-        return makeCommand( dx, dy, 'continue run out' )
+        command = makeCommand( dx, dy, 'continue run out' )
+        if self.isSplittable:
+            command['Split'] = True
+        return command
     
+    def getSelfMinMass( self ):
+        return min( map( lambda x: x.M, self.mine ) )
+    
+    def getOtherMaxMass( self ):
+        return max( map( lambda x: x.M, self.player ) )
+    
+    # при атаке разрешаем делиться если половина нашей самолей легков части на 20% тяжелее любой атакуемой части
+    # если наша скорость направленна на противника
     def attack( self ):
         minDistance = 10000
         target = None
@@ -519,7 +532,10 @@ class Strategy:
         dx = cos(t)
         dy = sin(t)
         x, y = self.setPointOnBorder( mine, dx, dy )
-        return makeCommand( x, y, 'attack' )
+        command = makeCommand( x, y, 'attack' )
+        if self.getSelfMinMass() >= self.getOtherMaxMass() * 1.2 and self.isSplittable:
+            command['Split'] = True
+        return command
     
     def moveToFood( self ):
         minTime = GAME_TICKS
@@ -573,13 +589,13 @@ class Strategy:
             if len( self.dangerous ) > 0:
                 #избегаем опасных соседей
                 command = self.runOut()
-            elif self.runCount > 0:
-                # если начали от кого-то убегать - продолжаем, пока не обнулится счетчик
-                command = self.runByDirection()
             elif len( self.eatable ) > 0:
                 # пытаемся съесть конкурента если можем, преследовать нужно с упреждением
                 # но не пытаемся догнать, то, что догнать нельзя
                 command = self.attack()
+            elif self.runCount > 0:
+                # если начали от кого-то убегать - продолжаем, пока не обнулится счетчик
+                command = self.runByDirection()
             else:
                 if len( self.food ) > 0:
                     # пытаемся съесть еду если видно
