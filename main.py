@@ -108,6 +108,13 @@ class MinePart( PlayerPart ):
         self.MaxSpeed = self.maxSpeed()
         self.Speed = sqrt( self.VX ** 2 + self.VY ** 2 )
         self.MaxTurnAngle, _ = maxTurnAngle( self.M, self.VX, self.VY )
+        # параметры наблюдаемой данным куском области
+        self.ObservationX = self.X + self.vx * 10
+        self.ObservationY = self.Y + self.vy * 10
+        self.ObservationR = None # радиус зависит от общего кол-ва частей - устанавливается стратегией
+        
+    def isPointVisible( self, X, Y ):
+        return sqrt( ( self.ObservationX - X ) ** 2 + ( self.ObservationY - Y ) ** 2 ) <= self.ObservationR
         
     def distanceToBorder( self ):
         return min( [self.X - self.R, GAME_WIDTH - self.X - self.R, self.Y - self.R, GAME_HEIGHT - self.Y - self.R ] )
@@ -124,6 +131,32 @@ class MinePart( PlayerPart ):
             ny = 10.0 / ( 2 + self.Y )
         elif self.Y > GAME_HEIGHT - minDistance:
             ny = -10.0 / ( 2 + GAME_HEIGHT - self.Y )
+        if nx != 0 or ny != 0:
+            nx, ny = normalize( nx, ny )
+        return nx, ny
+    
+    def borderStandoffFree( self ):
+        xmin, ymin = self.getBorderMargin()
+        nx = 0
+        ny = 0
+        if self.X < xmin:
+            nx = 1
+        elif self.X > GAME_WIDTH - xmin:
+            nx = -1
+        if self.Y < ymin:
+            ny = 1
+        elif self.Y > GAME_HEIGHT - ymin:
+            ny = -1
+        if nx == 0 and ny != 0:
+            if self.X - self.R < 2:
+                nx = 1
+            elif self.X + self.R > GAME_WIDTH - 2:
+                nx = -1
+        elif nx != 0 and ny == 0:
+            if self.Y - self.R < 2:
+                ny = 1
+            elif self.Y + self.R > GAME_HEIGHT - 2:
+                ny = -1
         if nx != 0 or ny != 0:
             nx, ny = normalize( nx, ny )
         return nx, ny
@@ -170,18 +203,18 @@ class MinePart( PlayerPart ):
     # оценка времени достижения заданного объекта с полным перекрытием его
     # при использовании поворотов на максимальный возможный угол
     # оценка времени достижения заданного объекта с полным перекрытием его
-    def getTimeToTarget( self, target, bestTime ):
-        captureDistance = self.R - target.R
+    def getTimeToTarget( self, X, Y, R, bestTime ):
+        captureDistance = self.R - R
         T = 0
         X0 = self.X
         Y0 = self.Y
         Vx0 = self.VX
         Vy0 = self.VY
-        curDistance = sqrt( (self.X - target.X)**2 + (self.Y - target.Y)**2 )
+        curDistance = sqrt( (self.X - X)**2 + (self.Y - Y)**2 )
         prevDistance = curDistance
         while curDistance > captureDistance and T < 100:
             targetAngleSize = atan( captureDistance / curDistance )
-            X0, Y0, Vx0, Vy0, curDistance = self.stepToTarget( X0, Y0, Vx0, Vy0, target.X, target.Y, targetAngleSize )
+            X0, Y0, Vx0, Vy0, curDistance = self.stepToTarget( X0, Y0, Vx0, Vy0, X, Y, targetAngleSize )
             if prevDistance < curDistance:
                 return GAME_TICKS
             prevDistance = curDistance
@@ -256,6 +289,24 @@ class MinePart( PlayerPart ):
         if L1 < L2:
             tmax = t2
         return tmax
+    
+    # вычисляем минимально расстояние от границы, на котором мы сможем затормозить
+    # если тормозить будем относительно одной границы под углом 45 градусов
+    def getBorderMargin( self ):
+        Lx = 0
+        Ly = 0
+        a = INERTION_FACTOR / self.M
+        Vmax = SPEED_FACTOR / ( sqrt( self.M ) * sqrt(2.0) )
+        Vx = abs( self.VX )
+        Vy = abs( self.VY )
+        while Vx > 0 or Vy > 0:
+            Vx = (1 - a) * Vx - a * Vmax
+            Vy = (1 - a) * Vy - a * Vmax
+            if Vx > 0:
+                Lx += Vx
+            if Vy > 0:
+                Ly += Vy
+        return ( Lx + self.R ) * 2, ( Ly + self.R ) * 2
             
 class Food( GameObject ):
     def __init__( self, data ):
@@ -272,7 +323,8 @@ class Strategy:
     def __init__( self ):
         self.mine = []
         self.direction = None
-        self.food = []
+        self.food = [] # актуальная еда
+        self.visibleFood = set()
         self.ejection = []
         self.virus = []
         self.player = []
@@ -294,6 +346,10 @@ class Strategy:
         self.dXrun = None # направление убегания
         self.dYrun = None
         self.runOutPart = None # часть которая убегает
+        # старая запомненная - ключ - ключ коодинаты, значение - тик последнего наблюдения
+        # слишком старые записи будем выбрасывать
+        self.memorizedFood = {} 
+        self.tickCount = 0
         
     def parseData( self, data ):
         mine, objects = data.get( 'Mine' ), data.get( 'Objects' )
@@ -306,6 +362,7 @@ class Strategy:
         self.isSplittable = False
         minMass = 10000.0
         self.totalMass = 0
+        
         for m in mine:
             self.mine.append( MinePart( m ) )
         for m in self.mine:
@@ -319,7 +376,14 @@ class Strategy:
             if m.M < minMass:
                 minMass = m.M
             self.totalMass += m.M
+            # вычисляем радиус обзора
+            partsCount = len( self.mine )
+            if partsCount == 1:
+                m.ObservationR = m.R * 4
+            else:
+                m.ObservationR = m.R * 2.5 * sqrt( partsCount )
         self.food.clear()
+        self.visibleFood.clear()
         self.ejection.clear()
         self.virus.clear()
         self.player.clear()
@@ -331,6 +395,7 @@ class Strategy:
                 food = Food( o )
                 if self.isFoodReachable( food ):
                     self.food.append( food )
+                    self.visibleFood.add( (food.X, food.Y) )
             elif objectType == 'E':
                 self.ejection.append( Ejection( o ) )
             elif objectType == 'V':
@@ -357,11 +422,37 @@ class Strategy:
             self.prevCoords[p.Id] = [ p.X, p.Y ]
         for p in self.player:
             self.prevCoords[p.Id] = [ p.X, p.Y ]
+        self.processFood()
+            
+    def processFood( self ):
+        # добавить новую еду или обновить время у старой
+        toDelete = []
+        if len( self.mine ) > 4:
+            self.memorizedFood.clear()
+            return
+        for f in self.memorizedFood:
+            if self.isPointVisible( f[0], f[1] ) and not( f in self.visibleFood ):
+                # выбросить еду которая уже должна быть видима, но не наблюдается
+                toDelete.append( f )
+            elif self.tickCount - self.memorizedFood[f] > 50: # запоминаем еду на 50 ходов
+                # выбросить слишком старые данные
+                toDelete.append( f )
+        for f in toDelete:
+            del self.memorizedFood[f]
+        for f in self.visibleFood:
+            self.memorizedFood[f] = self.tickCount
+            
+    def isPointVisible( self, X, Y ):
+        for m in self.mine:
+            if m.isPointVisible( X, Y ):
+                return True
+        return False
             
     def run( self ):
         initParams( json.loads( input() ) )
         self.fieldDiameter = sqrt( GAME_WIDTH ** 2 + GAME_HEIGHT ** 2 )
         while True:
+            self.tickCount += 1
             data = json.loads( input() )
             cmd = self.on_tick( data )
             print( json.dumps(cmd) )
@@ -430,6 +521,17 @@ class Strategy:
                 dMin = d
         return dx, dy
     
+    def getBorderStandoffFree( self ):
+        dx = 0
+        dy = 0
+        dMin = 1000000
+        for m in self.mine:
+            d = m.distanceToBorder()
+            if d < dMin:
+                dx, dy = m.borderStandoffFree()
+                dMin = d
+        return dx, dy
+    
     def currentSpeed( self ):
         VX = 0
         VY = 0
@@ -463,6 +565,7 @@ class Strategy:
         
     # ищем пару опасный противник - своя часть с минимальным расстоянием
     # убегать будем по направлени, соединяющему центры этой пары
+    # если можем слиться
     def runOut( self ):
         minDistance = 10000
         mineEnd = None
@@ -533,6 +636,7 @@ class Strategy:
         dy = sin(t)
         x, y = self.setPointOnBorder( mine, dx, dy )
         command = makeCommand( x, y, 'attack' )
+        
         if self.getSelfMinMass() >= self.getOtherMaxMass() * 1.2 and self.isSplittable:
             command['Split'] = True
         return command
@@ -542,19 +646,21 @@ class Strategy:
         bestFood = None
         bestMine = None
         for m in self.mine:
-            for f in self.food:
-                # игнорируем еду, которая осталась у нас за спиной
-                foodAngle = atan2( f.Y - m.Y, f.X - m.X )
-                mineAngle = atan2( m.VY, m.VX )
-                if abs( foodAngle - mineAngle ) > pi / 2: #m.MaxTurnAngle:
-                    continue
-                t = m.getTimeToTarget( f, minTime )
+            for f in self.visibleFood:
+                t = m.getTimeToTarget( f[0], f[1], 1, minTime )
+                if t < minTime:
+                    bestMine = m
+                    bestFood = f
+                    minTime = t
+            for f in self.memorizedFood:
+                t = m.getTimeToTarget( f[0], f[1], 1, minTime )
                 if t < minTime:
                     bestMine = m
                     bestFood = f
                     minTime = t
         if minTime >= GAME_TICKS:
             return self.makeFreeMove()
+        bestFood = Food( { 'X': bestFood[0], 'Y': bestFood[1] } )
         distance = bestMine.distance( bestFood )
         targetAngleSize = atan( ( bestMine.R - bestFood.R ) / distance )
         t = bestMine.getBestDirectionToTarget( bestMine.X, bestMine.Y, bestMine.VX, bestMine.VY, bestFood.X, bestFood.Y, targetAngleSize )
@@ -572,7 +678,7 @@ class Strategy:
             VX = cos( angle )
             VY = sin( angle )
         VX, VY = normalize( VX, VY )
-        dx, dy = self.getBorderStandoff()
+        dx, dy = self.getBorderStandoffFree()
         if dx != 0 or dy != 0:
             VX += dx
             VY += dy
@@ -597,7 +703,7 @@ class Strategy:
                 # если начали от кого-то убегать - продолжаем, пока не обнулится счетчик
                 command = self.runByDirection()
             else:
-                if len( self.food ) > 0:
+                if len( self.food ) > 0 or len( self.memorizedFood ) > 0:
                     # пытаемся съесть еду если видно
                     command = self.moveToFood()
                 else:
